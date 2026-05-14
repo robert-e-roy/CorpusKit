@@ -152,40 +152,73 @@ public class SentenceRanker {
 
     // MARK: - Private Helpers
 
+    /// Strip an all-caps heading phrase from the front of chunk text.
+    /// Returns the body text and its byte offset within the original string.
+    /// Chunk text is words joined by single spaces, so newlines are gone —
+    /// headings like "HOW IT WORKS" bleed into the first sentence without this.
+    private func stripLeadingHeading(from text: String) -> (text: String, offset: Int) {
+        let words = text.split(separator: " ", omittingEmptySubsequences: true)
+        guard words.count > 3 else { return (text, 0) }
+
+        // Scan all-caps words but stop when an all-caps word is followed by a lowercase
+        // word — that all-caps word starts a sentence (e.g. "RARELY have we seen..."),
+        // not the heading tail.
+        var headingCount = 0
+        for i in 0..<min(words.count - 1, 8) {
+            let bare = String(words[i]).trimmingCharacters(in: .punctuationCharacters)
+            guard !bare.isEmpty, bare.contains(where: { $0.isLetter }) else { break }
+            guard bare == bare.uppercased() else { break }
+
+            let nextBare = String(words[i + 1]).trimmingCharacters(in: .punctuationCharacters)
+            if nextBare.first?.isLowercase == true {
+                // This all-caps word begins body text; don't include it in the heading
+                break
+            }
+            headingCount += 1
+        }
+
+        guard headingCount >= 2, headingCount < words.count else { return (text, 0) }
+
+        let headingPhrase = words.prefix(headingCount).joined(separator: " ")
+        let offset = headingPhrase.count + 1
+        let body = words.dropFirst(headingCount).joined(separator: " ")
+        return (body, offset)
+    }
+
     /// Split text into sentences preserving their offsets
     private func splitIntoSentences(_ text: String) -> [Sentence] {
+        let (processedText, headingOffset) = stripLeadingHeading(from: text)
+
         var sentences: [Sentence] = []
         var currentStart = 0
         var currentSentence = ""
 
-        for (index, char) in text.enumerated() {
+        for (index, char) in processedText.enumerated() {
             currentSentence.append(char)
 
             // Check for sentence boundaries: . ? ! followed by whitespace or end of text
             if char == "." || char == "?" || char == "!" {
-                let nextIndex = text.index(text.startIndex, offsetBy: index + 1)
-                let isEndOfText = nextIndex >= text.endIndex
-                let isFollowedByWhitespace = !isEndOfText && text[nextIndex].isWhitespace
+                let nextIndex = processedText.index(processedText.startIndex, offsetBy: index + 1)
+                let isEndOfText = nextIndex >= processedText.endIndex
+                let isFollowedByWhitespace = !isEndOfText && processedText[nextIndex].isWhitespace
 
                 if isEndOfText || isFollowedByWhitespace {
-                    // Trim whitespace
                     let trimmed = currentSentence.trimmingCharacters(in: .whitespacesAndNewlines)
                     if !trimmed.isEmpty {
                         sentences.append(Sentence(
                             text: trimmed,
-                            startOffset: currentStart,
+                            startOffset: currentStart + headingOffset,
                             length: trimmed.utf8.count
                         ))
                     }
 
-                    // Reset for next sentence
                     currentSentence = ""
                     currentStart = index + 1
 
                     // Skip whitespace after sentence boundary
-                    while currentStart < text.count {
-                        let idx = text.index(text.startIndex, offsetBy: currentStart)
-                        if idx < text.endIndex && text[idx].isWhitespace {
+                    while currentStart < processedText.count {
+                        let idx = processedText.index(processedText.startIndex, offsetBy: currentStart)
+                        if idx < processedText.endIndex && processedText[idx].isWhitespace {
                             currentStart += 1
                         } else {
                             break
@@ -200,7 +233,7 @@ public class SentenceRanker {
         if !trimmed.isEmpty {
             sentences.append(Sentence(
                 text: trimmed,
-                startOffset: currentStart,
+                startOffset: currentStart + headingOffset,
                 length: trimmed.utf8.count
             ))
         }
