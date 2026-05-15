@@ -7,100 +7,7 @@
 
 import Foundation
 
-/// Result of a single evaluation test
-public struct EvalResult: Codable {
-    public let testID: String
-    public let query: String
-    public let expectedPassage: String
-    public let score: Float
-    public let threshold: Float
-    public let topMatch: String
-    public let topMatchChunk: String?
-    public let timestamp: Date
-
-    // Sentence-level scoring (optional, populated when sentence ranking is used)
-    public let sentenceScore: Float?
-    public let winningSentence: String?
-    public let sentenceContext: String?
-    public let sentenceChunkId: Int?
-    public let sentenceCharacterOffset: Int?
-    public let sentenceCharacterLength: Int?
-
-    public var passed: Bool { score >= threshold }
-
-    enum CodingKeys: String, CodingKey {
-        case testID = "test_id"
-        case query
-        case expectedPassage = "expected_passage"
-        case score
-        case threshold
-        case topMatch = "top_match"
-        case topMatchChunk = "top_match_chunk"
-        case timestamp
-        case sentenceScore = "sentence_score"
-        case winningSentence = "winning_sentence"
-        case sentenceContext = "sentence_context"
-        case sentenceChunkId = "sentence_chunk_id"
-        case sentenceCharacterOffset = "sentence_character_offset"
-        case sentenceCharacterLength = "sentence_character_length"
-    }
-
-    public init(
-        testID: String,
-        query: String,
-        expectedPassage: String,
-        score: Float,
-        threshold: Float,
-        topMatch: String,
-        topMatchChunk: String? = nil,
-        timestamp: Date = Date(),
-        sentenceScore: Float? = nil,
-        winningSentence: String? = nil,
-        sentenceContext: String? = nil,
-        sentenceChunkId: Int? = nil,
-        sentenceCharacterOffset: Int? = nil,
-        sentenceCharacterLength: Int? = nil
-    ) {
-        self.testID = testID
-        self.query = query
-        self.expectedPassage = expectedPassage
-        self.score = score
-        self.threshold = threshold
-        self.topMatch = topMatch
-        self.topMatchChunk = topMatchChunk
-        self.timestamp = timestamp
-        self.sentenceScore = sentenceScore
-        self.winningSentence = winningSentence
-        self.sentenceContext = sentenceContext
-        self.sentenceChunkId = sentenceChunkId
-        self.sentenceCharacterOffset = sentenceCharacterOffset
-        self.sentenceCharacterLength = sentenceCharacterLength
-    }
-}
-
-/// Evaluation test definition
-public struct EvalTest: Codable {
-    public let id: String
-    public let question: String
-    public let expectedPassage: String
-    public let matchThreshold: Float
-
-    enum CodingKeys: String, CodingKey {
-        case id
-        case question
-        case expectedPassage = "expected_passage"
-        case matchThreshold = "match_threshold"
-    }
-
-    public init(id: String, question: String, expectedPassage: String, matchThreshold: Float) {
-        self.id = id
-        self.question = question
-        self.expectedPassage = expectedPassage
-        self.matchThreshold = matchThreshold
-    }
-}
-
-/// Generic chunk protocol for evaluation
+/// Protocol for chunks that can be evaluated (requires only text)
 public protocol EvalChunk {
     var text: String { get }
 }
@@ -110,26 +17,18 @@ public class EvalRunner {
 
     public init() {}
 
-    /// Run evaluation tests using the vector store with optional sentence ranking
-    /// - Parameters:
-    ///   - tests: Array of evaluation tests
-    ///   - items: Array of chunks/items to search
-    ///   - embeddings: Pre-computed embeddings matching items
-    ///   - embeddingService: Service to embed test passages
-    ///   - useSentenceRanking: Whether to use sentence-level ranking (default: false)
-    ///   - progressHandler: Optional progress callback
-    /// - Returns: Array of evaluation results
-    public func run<T: EvalChunk & RankableChunk>(
+    /// Run evaluation tests against a set of chunks.
+    /// Uses the same vector search path as consumer apps.
+    public func run(
         tests: [EvalTest],
-        items: [T],
+        items: [Chunk],
         embeddings: [[Float]],
         embeddingService: EmbeddingService,
         useSentenceRanking: Bool = false,
         progressHandler: ((String) -> Void)? = nil
     ) async throws -> [EvalResult] {
 
-        // Build vector store
-        let vectorStore = VectorStore<T>()
+        let vectorStore = VectorStore<Chunk>()
         vectorStore.build(items: items, embeddings: embeddings)
 
         var results: [EvalResult] = []
@@ -137,34 +36,42 @@ public class EvalRunner {
         for (index, test) in tests.enumerated() {
             progressHandler?("Running test \(index + 1)/\(tests.count): \(test.question)")
 
-            // Embed the expected passage (not the question!)
             let passageEmbedding = try await embeddingService.embed(test.expectedPassage)
-
-            // Search for similar chunks
             let searchResults = vectorStore.search(query: passageEmbedding, k: 5)
 
-            // Get top match
+            let retrievedChunks = searchResults.map { result in
+                EvalResult.RetrievedChunkInfo(
+                    chunkId: result.item.id,
+                    text: result.item.text,
+                    similarity: result.rawScore,
+                    chapter: result.item.chapter,
+                    page: result.item.page
+                )
+            }
+
             guard let topResult = searchResults.first else {
                 results.append(EvalResult(
-                    testID: test.id,
+                    testId: test.id,
                     query: test.question,
                     expectedPassage: test.expectedPassage,
-                    score: 0.0,
-                    threshold: test.matchThreshold,
                     topMatch: "(no results)",
-                    topMatchChunk: nil
+                    passed: false,
+                    bestMatchSimilarity: 0.0,
+                    threshold: test.matchThreshold,
+                    retrievedChunks: []
                 ))
                 continue
             }
 
-            // Sentence-level scoring if requested
             var sentenceScore: Float? = nil
             var winningSentence: String? = nil
             var sentenceContext: String? = nil
+            var sentenceChunkId: Int? = nil
+            var sentenceCharacterOffset: Int? = nil
+            var sentenceCharacterLength: Int? = nil
 
             if useSentenceRanking {
-                let sentenceRanker = SentenceRanker()
-                let rankedSentences = try await sentenceRanker.rank(
+                let rankedSentences = try await SentenceRanker().rank(
                     query: passageEmbedding,
                     chunks: searchResults,
                     embeddingService: embeddingService
@@ -173,39 +80,42 @@ public class EvalRunner {
                 if let topSentence = rankedSentences.first {
                     sentenceScore = topSentence.score
                     winningSentence = topSentence.text
+                    sentenceChunkId = topSentence.chunkID
+                    sentenceCharacterOffset = topSentence.characterOffset
+                    sentenceCharacterLength = topSentence.characterLength
 
-                    // Build context string
                     var contextParts: [String] = []
-                    if !topSentence.contextBefore.isEmpty {
-                        contextParts.append("[...] \(topSentence.contextBefore)")
-                    }
+                    if !topSentence.contextBefore.isEmpty { contextParts.append("[...] \(topSentence.contextBefore)") }
                     contextParts.append("→ \(topSentence.text)")
-                    if !topSentence.contextAfter.isEmpty {
-                        contextParts.append("\(topSentence.contextAfter) [...]")
-                    }
+                    if !topSentence.contextAfter.isEmpty { contextParts.append("\(topSentence.contextAfter) [...]") }
                     sentenceContext = contextParts.joined(separator: " ")
                 }
             }
 
-            // Create result
-            let result = EvalResult(
-                testID: test.id,
+            let effectiveScore = sentenceScore ?? topResult.rawScore
+            let passed = effectiveScore >= test.matchThreshold
+
+            results.append(EvalResult(
+                testId: test.id,
                 query: test.question,
                 expectedPassage: test.expectedPassage,
-                score: topResult.rawScore,
-                threshold: test.matchThreshold,
                 topMatch: String(topResult.item.text.prefix(100)),
                 topMatchChunk: topResult.item.text,
+                passed: passed,
+                bestMatchSimilarity: topResult.rawScore,
+                threshold: test.matchThreshold,
+                retrievedChunks: retrievedChunks,
+                timestamp: Date(),
                 sentenceScore: sentenceScore,
                 winningSentence: winningSentence,
-                sentenceContext: sentenceContext
-            )
-
-            results.append(result)
+                sentenceContext: sentenceContext,
+                sentenceChunkId: sentenceChunkId,
+                sentenceCharacterOffset: sentenceCharacterOffset,
+                sentenceCharacterLength: sentenceCharacterLength
+            ))
         }
 
         progressHandler?("Evaluation complete")
-
         return results
     }
 }
