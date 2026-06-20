@@ -56,6 +56,14 @@ Verified: `page` is in `Chunk.CodingKeys` (not omitted) and PDF `ContentUnit`s a
 - Confirm the new 3-reference LLM response format in BigBookViaLLM is populated correctly from retrieved chunks
 - All eval cases must pass before proceeding to Phase 4
 
+### Open items (from 2026-06-20 partial validation of `testphase3_v3.corpus.zip`)
+
+Validated so far: unified `CorpusMetadata` schema (`bundle_schema_version: 1`, no legacy key) confirmed in a real export; 2c confirmed working (eval retrieved the correct chunk as `top_match`). That bundle was a single-chapter export ("I. Bill's Story"), so full retrieval was not exercised.
+
+1. **Run eval against the whole book**, not one chapter — single-chapter corpora don't exercise cross-chapter retrieval competition.
+2. **Recalibrate the eval pass criterion for question-embedding (2c).** With the question embedded (not the passage), a correct top-1 scores ~0.3–0.6, so the old absolute `0.75` threshold fails even when retrieval is correct. Prefer a top-k hit test (is the expected passage's chunk in top-k?) over absolute cosine; if keeping a threshold, drop to ~0.3–0.4 and verify across several cases. Also use natural-language questions, not terse keywords.
+3. **Decide EPUB `bookPage` behavior.** EPUB chunks currently carry `page` = chapter unit index with `bookPage: null`, even though `words_per_page` is set — so every chunk in a chapter shows the same page. Decide whether to populate an estimated reading `bookPage` for EPUB.
+
 ---
 
 ## Phase 4 — CorpusKit for Mac
