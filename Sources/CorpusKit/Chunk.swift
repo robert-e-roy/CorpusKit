@@ -9,7 +9,7 @@
 import Foundation
 
 public struct Chunk: Codable, Identifiable, EvalChunk, RankableChunk {
-    public let id: Int
+    public var id: Int   // reassigned when chunks are renumbered after (re)chunking
     public var text: String
     public let source: String
     public var chapter: String
