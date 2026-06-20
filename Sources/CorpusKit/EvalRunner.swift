@@ -36,8 +36,11 @@ public class EvalRunner {
         for (index, test) in tests.enumerated() {
             progressHandler?("Running test \(index + 1)/\(tests.count): \(test.question)")
 
-            let passageEmbedding = try await embeddingService.embed(test.expectedPassage)
-            let searchResults = vectorStore.search(query: passageEmbedding, k: 5)
+            // Embed the question — matching the production retrieval path, which embeds the
+            // user's query (not the expected passage). Phase 2c: keeps eval and production
+            // on identical paths so eval scores reflect real query→chunk retrieval.
+            let queryEmbedding = try await embeddingService.embed(test.question)
+            let searchResults = vectorStore.search(query: queryEmbedding, k: 5)
 
             let retrievedChunks = searchResults.map { result in
                 EvalResult.RetrievedChunkInfo(
@@ -72,7 +75,7 @@ public class EvalRunner {
 
             if useSentenceRanking {
                 let rankedSentences = try await SentenceRanker().rank(
-                    query: passageEmbedding,
+                    query: queryEmbedding,
                     chunks: searchResults,
                     embeddingService: embeddingService
                 )

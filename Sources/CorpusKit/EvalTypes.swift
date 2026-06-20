@@ -7,42 +7,6 @@
 
 import Foundation
 
-// MARK: - Project Metadata
-
-public struct ProjectMetadata: Codable {
-    public let corpusId: UUID
-    public let createdAt: Date
-    public let updatedAt: Date
-    public let formatVersion: Int
-    public let title: String
-    public let sourceFileName: String
-
-    public enum CodingKeys: String, CodingKey {
-        case corpusId = "corpus_id"
-        case createdAt = "created_at"
-        case updatedAt = "updated_at"
-        case formatVersion = "format_version"
-        case title
-        case sourceFileName = "source_file_name"
-    }
-
-    public init(
-        corpusId: UUID = UUID(),
-        createdAt: Date = Date(),
-        updatedAt: Date = Date(),
-        formatVersion: Int = 1,
-        title: String,
-        sourceFileName: String
-    ) {
-        self.corpusId = corpusId
-        self.createdAt = createdAt
-        self.updatedAt = updatedAt
-        self.formatVersion = formatVersion
-        self.title = title
-        self.sourceFileName = sourceFileName
-    }
-}
-
 // MARK: - Evaluation Tests
 
 public struct EvalTest: Codable, Identifiable {

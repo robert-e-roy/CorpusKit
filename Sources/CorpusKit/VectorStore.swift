@@ -73,6 +73,8 @@ public class VectorStore<T> {
                 vDSP_Length(dimension)
             )
 
+            // corpusAuthority intentionally excluded from scoring.
+            // Applied here when multi-corpus ranking is introduced.
             let weight = weightFunction?(items[i]) ?? 1.0
             let weightedScore = similarity * weight
 
