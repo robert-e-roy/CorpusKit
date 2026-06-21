@@ -102,6 +102,38 @@ import Foundation
         #expect(dot < 0.99)
     }
 
+    // MARK: - Corpus bundle loading (Phase A2)
+
+    /// The npy parser reads the exact format CorpusExporter writes (magic + v1 header + <f4 C-order).
+    @Test func npyParsesFloat32MatrixRoundTrip() throws {
+        let rows = 2, cols = 3
+        let values: [[Float]] = [[0.1, -0.2, 0.3], [1.5, 2.5, -3.5]]
+
+        // Build .npy byte-for-byte as CorpusExporter.encodeNpy does.
+        let header = "{'descr': '<f4', 'fortran_order': False, 'shape': (\(rows), \(cols)), }"
+        let padded = header.padding(toLength: ((header.count + 64) / 64) * 64 - 1, withPad: " ", startingAt: 0) + "\n"
+        var data = Data([0x93, 0x4E, 0x55, 0x4D, 0x50, 0x59, 0x01, 0x00])
+        let hlen = UInt16(padded.utf8.count)
+        data.append(UInt8(hlen & 0xFF)); data.append(UInt8((hlen >> 8) & 0xFF))
+        data.append(contentsOf: padded.utf8)
+        for row in values { for v in row { withUnsafeBytes(of: v.bitPattern.littleEndian) { data.append(contentsOf: $0) } } }
+
+        let parsed = try CorpusBundleLoader.parseNpyFloat32(data)
+        #expect(parsed.count == rows)
+        #expect(parsed[0].count == cols)
+        for r in 0..<rows { for c in 0..<cols { #expect(abs(parsed[r][c] - values[r][c]) < 1e-6) } }
+    }
+
+    /// Catalog derives title/version from the `<Title>_v<N>` export convention (Phase A3).
+    @Test func catalogParsesTitleAndVersionFromFilename() {
+        let a = CorpusCatalog.titleAndVersion(fromFileName: "Big Book_v3")
+        #expect(a.title == "Big Book")
+        #expect(a.version == 3)
+        let b = CorpusCatalog.titleAndVersion(fromFileName: "NoVersion")
+        #expect(b.title == "NoVersion")
+        #expect(b.version == nil)
+    }
+
     /// Dimension + identity are sourced from EmbeddingModelInfo everywhere (Phase 4a-B).
     @Test func embeddingModelInfoIsSingleSourceOfDimension() {
         #expect(EmbeddingModelInfo.current.id == "Snowflake/snowflake-arctic-embed-m-v1.5")
