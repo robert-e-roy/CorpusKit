@@ -28,7 +28,7 @@ public class VectorStore<T> {
 
     private var items: [T] = []
     private var embeddings: [[Float]] = []
-    public let dimension = 384
+    public let dimension = EmbeddingModelInfo.current.dimension
 
     public init() {}
 

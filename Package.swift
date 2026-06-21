@@ -17,7 +17,15 @@ let package = Package(
     targets: [
         .target(
             name: "CorpusKit",
-            dependencies: []),
+            dependencies: [],
+            resources: [
+                // Ship the precompiled model (.mlmodelc) — SPM .copy does not compile a raw
+                // .mlmodel/.mlpackage, and Core ML's MLModel.load needs a compiled .mlmodelc.
+                // Regenerate via Python Scripts/05_pytorch_to_coreml.py (neuralnetwork format).
+                // .mlmodelc is a directory bundle — must be .copy (not .process).
+                .copy("Resources/arctic-embed-m-v1.5.mlmodelc"),
+                .copy("Resources/vocab.txt"),
+            ]),
         .testTarget(
             name: "CorpusKitTests",
             dependencies: ["CorpusKit"]),

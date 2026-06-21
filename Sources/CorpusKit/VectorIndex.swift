@@ -10,7 +10,7 @@ import Foundation
 public class VectorIndex {
 
     private let store = VectorStore<Chunk>()
-    public let dimension = 384
+    public let dimension = EmbeddingModelInfo.current.dimension
 
     public init() {}
 

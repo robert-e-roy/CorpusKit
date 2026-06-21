@@ -15,60 +15,70 @@ public class EmbeddingService {
 
     private var model: MLModel?
     private var tokenizer: WordPieceTokenizer?
-    public let dimension = 384
+    public let dimension = EmbeddingModelInfo.current.dimension
+    /// Fixed input length the bundled model was traced at; read from model metadata at load,
+    /// falling back to the value declared in `EmbeddingModelInfo`. Never hardcoded.
+    private var sequenceLength = EmbeddingModelInfo.current.seqLength
 
     public init() {}
 
     /// Load the MiniLM embedding model from the app bundle
     /// - Throws: EmbeddingError if model or vocabulary cannot be loaded
     public func load() async throws {
-        // Try multiple possible locations for the model
-        var modelURL: URL?
-
-        // 1. Try as .mlpackage (source)
-        modelURL = Bundle.main.url(forResource: "MiniLMEmbedding", withExtension: "mlpackage")
-
-        // 2. Try as .mlmodelc (compiled)
-        if modelURL == nil {
-            modelURL = Bundle.main.url(forResource: "MiniLMEmbedding", withExtension: "mlmodelc")
-        }
-
-        // 3. Try searching in Resources directory directly
-        if modelURL == nil, let resourcesURL = Bundle.main.resourceURL {
-            let mlpackageURL = resourcesURL.appendingPathComponent("MiniLMEmbedding.mlpackage")
-            let mlmodelcURL = resourcesURL.appendingPathComponent("MiniLMEmbedding.mlmodelc")
-
-            if FileManager.default.fileExists(atPath: mlpackageURL.path) {
-                modelURL = mlpackageURL
-            } else if FileManager.default.fileExists(atPath: mlmodelcURL.path) {
-                modelURL = mlmodelcURL
-            }
-        }
-
-        guard let finalURL = modelURL else {
+        // Resolve the model + vocab. Prefer the package's own bundled resources (Bundle.module),
+        // so every consumer shares one model; fall back to the app bundle (Bundle.main) for apps
+        // that still ship their own copy during migration.
+        // Prefer the precompiled .mlmodelc (shipped in the package); .mlpackage is only loadable
+        // when a host app's Xcode build compiled it (Bundle.main fallback during migration).
+        guard let modelURL = Self.resourceURL(named: "arctic-embed-m-v1.5", extensions: ["mlmodelc", "mlpackage"]) else {
             throw EmbeddingError.modelNotFound
         }
 
         let config = MLModelConfiguration()
         config.computeUnits = .cpuAndNeuralEngine
-        model = try await MLModel.load(contentsOf: finalURL, configuration: config)
+        let loadedModel = try await MLModel.load(contentsOf: modelURL, configuration: config)
+        model = loadedModel
 
-        // Load tokenizer - try both .json and .txt formats
-        var vocabURL = Bundle.main.url(forResource: "vocab", withExtension: "json")
-        if vocabURL == nil {
-            vocabURL = Bundle.main.url(forResource: "vocab", withExtension: "txt")
+        // Read the fixed sequence length from the model's user-defined metadata
+        // (coremltools writes it under the creator-defined key), fall back to the declared value.
+        if let creatorMeta = loadedModel.modelDescription.metadata[.creatorDefinedKey] as? [String: String],
+           let seqStr = creatorMeta["seq_length"], let seq = Int(seqStr) {
+            sequenceLength = seq
         }
 
-        guard let finalVocabURL = vocabURL else {
+        // Load tokenizer - try both .json and .txt formats
+        guard let vocabURL = Self.resourceURL(named: "vocab", extensions: ["json", "txt"]) else {
             throw EmbeddingError.vocabNotFound
         }
 
-        tokenizer = try WordPieceTokenizer(vocabURL: finalVocabURL)
+        tokenizer = try WordPieceTokenizer(vocabURL: vocabURL)
 
         // Run diagnostic to verify embeddings are working correctly
         #if DEBUG
         try await runEmbeddingDiagnostic()
         #endif
+    }
+
+    /// Locate a bundled resource, preferring the package's own bundle (`Bundle.module`) and
+    /// falling back to the app bundle (`Bundle.main`). Tries each extension in order.
+    private static func resourceURL(named name: String, extensions: [String]) -> URL? {
+        for bundle in [Bundle.module, Bundle.main] {
+            for ext in extensions {
+                if let url = bundle.url(forResource: name, withExtension: ext) {
+                    return url
+                }
+            }
+            // Some build layouts place resources flat in the bundle root.
+            if let resourcesURL = bundle.resourceURL {
+                for ext in extensions {
+                    let candidate = resourcesURL.appendingPathComponent("\(name).\(ext)")
+                    if FileManager.default.fileExists(atPath: candidate.path) {
+                        return candidate
+                    }
+                }
+            }
+        }
+        return nil
     }
 
     public var isLoaded: Bool {
@@ -156,10 +166,10 @@ public class EmbeddingService {
             throw EmbeddingError.notLoaded
         }
 
-        // Tokenize
-        let (ids, mask) = tokenizer.tokenize(text, maxLength: 128)
+        // Tokenize to the model's fixed input length.
+        let (ids, mask) = tokenizer.tokenize(text, maxLength: sequenceLength)
 
-        // Create MLMultiArray inputs
+        // Create MLMultiArray inputs (the model declares Float32 inputs of shape [1, seqLength]).
         let inputIds = try createMLMultiArray(from: ids)
         let attentionMask = try createMLMultiArray(from: mask)
 
@@ -170,48 +180,15 @@ public class EmbeddingService {
 
         let output = try await model.prediction(from: input)
 
-        // IMPORTANT: MiniLM-L6-v2 uses MEAN POOLING (not CLS pooling)
-        // The pre-pooled output "var_548" may include padding tokens incorrectly
-        // We must do mean pooling ourselves with proper attention mask
-
-        #if DEBUG
-        // Log which output path we're using (first embed only)
-        struct OutputLogger {
-            static var hasLogged = false
+        // The model emits token embeddings (last_hidden_state, shape [1, seq, 768]). Pool them
+        // here with the attention mask, then L2-normalize. Pooling is done client-side because
+        // coremltools (neuralnetwork) mis-converts in-graph masked-mean reduce ops, collapsing
+        // all inputs to ~one vector — see Python Scripts/05_pytorch_to_coreml.py.
+        guard let outputName = output.featureNames.first,
+              let tokenEmbeddings = output.featureValue(for: outputName)?.multiArrayValue else {
+            throw EmbeddingError.badOutput
         }
-        if !OutputLogger.hasLogged {
-            OutputLogger.hasLogged = true
-            print("\n🔬 MODEL OUTPUT INSPECTION:")
-            print("   Available outputs: \(output.featureNames)")
-            if let pooled = output.featureValue(for: "var_548")?.multiArrayValue {
-                print("   var_548 shape: \(pooled.shape)")
-            }
-            if let hidden = output.featureValue(for: "hidden_states")?.multiArrayValue {
-                print("   hidden_states shape: \(hidden.shape)")
-            }
-            if let hidden = output.featureValue(for: "last_hidden_state")?.multiArrayValue {
-                print("   last_hidden_state shape: \(hidden.shape)")
-            }
-        }
-        #endif
-
-        // Extract hidden states and mean pool with attention mask
-        if let hiddenStates = output.featureValue(for: "hidden_states")?.multiArrayValue {
-            return meanPool(hiddenStates, mask: mask)
-        }
-
-        // Try alternate name for hidden states
-        if let hiddenState = output.featureValue(for: "last_hidden_state")?.multiArrayValue {
-            return meanPool(hiddenState, mask: mask)
-        }
-
-        // Only use pre-pooled output as last resort (may be incorrectly pooled)
-        if let pooledOutput = output.featureValue(for: "var_548")?.multiArrayValue {
-            print("⚠️  WARNING: Using pre-pooled output var_548 - may include padding tokens!")
-            return extractEmbedding(from: pooledOutput)
-        }
-
-        throw EmbeddingError.badOutput
+        return meanPool(tokenEmbeddings, mask: mask)
     }
 
     /// Generate embeddings for multiple texts with progress callback
@@ -250,64 +227,23 @@ public class EmbeddingService {
         return array
     }
 
-    /// Extract embedding from already-pooled output (shape: [1, 384])
-    private func extractEmbedding(from array: MLMultiArray) -> [Float] {
-        let dimension = array.shape[1].intValue
-        var embedding = [Float](repeating: 0, count: dimension)
-
-        for i in 0..<dimension {
-            embedding[i] = array[[0, NSNumber(value: i)]].floatValue
-        }
-
-        return l2Normalize(embedding)
-    }
-
-    /// Mean pooling over token dimension (shape: [1, 128, 384])
-    /// Only averages non-padding tokens (where mask[i] == 1)
+    /// Masked mean pooling over the token dimension of a [1, seq, hidden] output, then
+    /// L2-normalize. Padding tokens (mask == 0) are excluded so they don't dominate the mean.
     private func meanPool(_ array: MLMultiArray, mask: [Int]) -> [Float] {
         let seqLen = array.shape[1].intValue
         let hiddenSize = array.shape[2].intValue
         var pooled = [Float](repeating: 0, count: hiddenSize)
         var count: Float = 0
-
-        #if DEBUG
-        let activeTokens = mask.prefix(seqLen).filter { $0 == 1 }.count
-        let paddingTokens = mask.prefix(seqLen).filter { $0 == 0 }.count
-
-        // Log pooling details for first call only
-        struct PoolingLogger {
-            static var hasLogged = false
-        }
-        if !PoolingLogger.hasLogged {
-            PoolingLogger.hasLogged = true
-            print("\n🔬 MEAN POOLING INSPECTION:")
-            print("   Sequence length: \(seqLen)")
-            print("   Hidden size: \(hiddenSize)")
-            print("   Active tokens (mask=1): \(activeTokens)")
-            print("   Padding tokens (mask=0): \(paddingTokens)")
-            print("   Mask (first 20): \(mask.prefix(20))")
-        }
-        #endif
-
-        for t in 0..<min(seqLen, mask.count) {
-            guard mask[t] == 1 else { continue }  // Skip padding tokens
+        for t in 0..<min(seqLen, mask.count) where mask[t] == 1 {
+            let base = t * hiddenSize
             for h in 0..<hiddenSize {
-                let idx = t * hiddenSize + h
-                pooled[h] += array[idx].floatValue
+                pooled[h] += array[base + h].floatValue
             }
             count += 1
         }
-
         if count > 0 {
-            pooled = pooled.map { $0 / count }
+            for h in 0..<hiddenSize { pooled[h] /= count }
         }
-
-        #if DEBUG
-        if !PoolingLogger.hasLogged {
-            print("   Tokens averaged: \(Int(count))")
-        }
-        #endif
-
         return l2Normalize(pooled)
     }
 
@@ -333,13 +269,11 @@ public class EmbeddingService {
             switch self {
             case .modelNotFound:
                 return """
-                MiniLM embedding model not found.
+                Embedding model not found.
 
-                Please ensure MiniLMEmbedding.mlpackage is added to the project:
-                1. Download the all-MiniLM-L6-v2 model
-                2. Convert to Core ML format (.mlpackage)
-                3. Add to app Resources/
-                4. Ensure it's included in the target's "Copy Bundle Resources"
+                Expected arctic-embed-m-v1.5.mlmodelc bundled with the CorpusKit package.
+                Regenerate it with Python Scripts/05_pytorch_to_coreml.py (mlprogram format) and
+                copy it into CorpusKit/Sources/CorpusKit/Resources/.
                 """
             case .vocabNotFound:
                 return "Vocabulary file (vocab.json or vocab.txt) not found in app bundle"
