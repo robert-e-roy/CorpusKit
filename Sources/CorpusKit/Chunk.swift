@@ -97,14 +97,20 @@ public struct Chunk: Codable, Identifiable, EvalChunk, RankableChunk {
         }
     }
 
-    /// Page-only label for views that already show the chapter separately. Prefers the printed
-    /// book page; flags low-confidence EPUB estimates with a leading `~`; for reflowable EPUB with
-    /// no fixed page, shows the paragraph marker (`¶N`).
+    /// Page-only label for views that already show the chapter separately. Shows the printed book
+    /// page when available (`~` prefix flags a low-confidence EPUB estimate) and, for reflowable
+    /// EPUB, also the paragraph marker — e.g. "~p.12 ¶27", "p.59", or "¶27".
     public var pageLabel: String {
-        if bookPage == nil, let para = paragraph {
-            return "¶\(para)"
+        var parts: [String] = []
+        if let bookPage {
+            let prefix = (pageConfidence == "low" && pageNumberSource == "estimated") ? "~" : ""
+            parts.append("\(prefix)p.\(bookPage)")
+        } else if paragraph == nil {
+            parts.append("p.\(page)")
         }
-        let prefix = (pageConfidence == "low" && pageNumberSource == "estimated") ? "~" : ""
-        return "\(prefix)p.\(bookPage ?? page)"
+        if let paragraph {
+            parts.append("¶\(paragraph)")
+        }
+        return parts.joined(separator: " ")
     }
 }

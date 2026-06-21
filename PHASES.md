@@ -187,6 +187,24 @@ genuinely type-only consumer appears (and update BigBook in the same PR).
 
 ---
 
+## Parked — PDF import quality (Studio `PDFImporter`)
+
+Discovered 2026-06-21 comparing a PDF vs EPUB corpus of the same book. The EPUB corpus is clean
+(structured chapters, no headers); the PDF corpus is polluted, which makes its retrieval diverge
+badly from the EPUB's. Root causes, all in Studio's `PDFImporter`:
+
+1. **Page-number extraction misfires** — `extractPrintedPageNumber` matched body text (a chunk got
+   `bookPage = 1939`, the *year* from "reprint of the 1st edition 1939"). Must constrain to the
+   header/footer region (short top/bottom line that is mostly a number).
+2. **Running headers/footers not stripped** — "NN Alcoholics Anonymous" repeats into chunk text
+   (degrading embeddings) and gets captured as chapter boundaries (39 bogus "chapters" like
+   "170 Alcoholics Anonymous", "More About Alcoholism 51", "Chapter Page").
+3. **Chapter map** — auto-detection latched onto headers/TOC; needs curated boundaries. This is also
+   where **roman-numeral front-matter pages** should be marked (`bookStartPage` supports roman).
+
+Until fixed, prefer the EPUB source for books that exist in both formats. The page-label +
+EPUB-estimation work (committed) is unaffected.
+
 ## Rules for all phases
 - Do not add features until the current phase's eval gate passes
 - Only show changed files in output
