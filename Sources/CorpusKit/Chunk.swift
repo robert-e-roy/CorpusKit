@@ -86,7 +86,7 @@ public struct Chunk: Codable, Identifiable, EvalChunk, RankableChunk {
         self.sentenceCharacterLength = nil
     }
 
-    // Display location for UI
+    // Display location for UI (includes the chapter)
     public var displayLocation: String {
         if let para = paragraph {
             return "\(chapter) ¶\(para)"
@@ -95,5 +95,16 @@ public struct Chunk: Codable, Identifiable, EvalChunk, RankableChunk {
             let prefix = (pageConfidence == "low" && pageNumberSource == "estimated") ? "~" : ""
             return "\(prefix)p.\(page)"
         }
+    }
+
+    /// Page-only label for views that already show the chapter separately. Prefers the printed
+    /// book page; flags low-confidence EPUB estimates with a leading `~`; for reflowable EPUB with
+    /// no fixed page, shows the paragraph marker (`¶N`).
+    public var pageLabel: String {
+        if bookPage == nil, let para = paragraph {
+            return "¶\(para)"
+        }
+        let prefix = (pageConfidence == "low" && pageNumberSource == "estimated") ? "~" : ""
+        return "\(prefix)p.\(bookPage ?? page)"
     }
 }

@@ -35,7 +35,12 @@ public class EmbeddingService {
         }
 
         let config = MLModelConfiguration()
-        config.computeUnits = .cpuAndNeuralEngine
+        // Force CPU (FP32) for cross-platform determinism. Retrieval requires the query and the
+        // stored corpus embeddings to come from the *same* compute path; .cpuAndNeuralEngine lets
+        // each device pick a different backend (e.g. iPhone Neural Engine FP16 vs Mac CPU/GPU),
+        // which shifts the query vector and breaks ranking on one platform. CPU FP32 is identical
+        // across devices. Embedding one query is fast; corpus generation is a one-time build cost.
+        config.computeUnits = .cpuOnly
         let loadedModel = try await MLModel.load(contentsOf: modelURL, configuration: config)
         model = loadedModel
 
