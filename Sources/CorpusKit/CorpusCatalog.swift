@@ -10,6 +10,7 @@
 //
 
 import Foundation
+import ZIPFoundation
 
 public struct CorpusDescriptor: Identifiable, Hashable {
     public enum Source: String, Sendable, Hashable {
@@ -23,19 +24,22 @@ public struct CorpusDescriptor: Identifiable, Hashable {
     public let source: Source
     /// The `.corpus.zip` file or extracted `.corpus` directory.
     public let url: URL
-    /// Present only when read from an extracted `.corpus` directory (cheap); nil for `.zip`.
+    /// Document source type ("pdf" / "epub"), read from corpus_meta.json when available.
+    public let sourceType: String?
     public let embeddingModel: String?
     public let embeddingDimension: Int?
-    /// nil = unknown (zip, not yet loaded); true/false once dimension is known.
+    /// nil = unknown; true/false once dimension is known.
     public let isCompatible: Bool?
 
     public init(id: String, title: String, version: Int?, source: Source, url: URL,
-                embeddingModel: String? = nil, embeddingDimension: Int? = nil, isCompatible: Bool? = nil) {
+                sourceType: String? = nil, embeddingModel: String? = nil,
+                embeddingDimension: Int? = nil, isCompatible: Bool? = nil) {
         self.id = id
         self.title = title
         self.version = version
         self.source = source
         self.url = url
+        self.sourceType = sourceType
         self.embeddingModel = embeddingModel
         self.embeddingDimension = embeddingDimension
         self.isCompatible = isCompatible
@@ -69,11 +73,7 @@ public final class CorpusCatalog {
         for url in entries {
             let name = url.lastPathComponent
             if name.hasSuffix(".corpus.zip") {
-                let (title, version) = Self.titleAndVersion(fromFileName: String(name.dropLast(".corpus.zip".count)))
-                result.append(CorpusDescriptor(
-                    id: url.standardizedFileURL.path, title: title, version: version,
-                    source: source, url: url
-                ))
+                result.append(descriptorForZip(url, source: source))
             } else if url.pathExtension == "corpus",
                       (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
                 result.append(descriptorForCorpusDirectory(url, source: source))
@@ -86,23 +86,43 @@ public final class CorpusCatalog {
 
     private func descriptorForCorpusDirectory(_ dir: URL, source: CorpusDescriptor.Source) -> CorpusDescriptor {
         let metaURL = dir.appendingPathComponent("corpus_meta.json")
-        let (fallbackTitle, fallbackVersion) = Self.titleAndVersion(fromFileName: String(dir.lastPathComponent.dropLast(".corpus".count)))
+        if let data = try? Data(contentsOf: metaURL), let meta = Self.decodeMeta(data) {
+            return descriptor(meta: meta, url: dir, source: source)
+        }
+        let (title, version) = Self.titleAndVersion(fromFileName: String(dir.lastPathComponent.dropLast(".corpus".count)))
+        return CorpusDescriptor(id: dir.standardizedFileURL.path, title: title, version: version, source: source, url: dir)
+    }
 
+    /// Reads corpus_meta.json from the `.corpus.zip` without fully extracting (single-entry read).
+    private func descriptorForZip(_ url: URL, source: CorpusDescriptor.Source) -> CorpusDescriptor {
+        if let meta = Self.readMetadata(fromZip: url) {
+            return descriptor(meta: meta, url: url, source: source)
+        }
+        let (title, version) = Self.titleAndVersion(fromFileName: String(url.lastPathComponent.dropLast(".corpus.zip".count)))
+        return CorpusDescriptor(id: url.standardizedFileURL.path, title: title, version: version, source: source, url: url)
+    }
+
+    private func descriptor(meta: CorpusMetadata, url: URL, source: CorpusDescriptor.Source) -> CorpusDescriptor {
+        CorpusDescriptor(
+            id: url.standardizedFileURL.path, title: meta.title, version: meta.corpusVersion,
+            source: source, url: url, sourceType: meta.sourceType, embeddingModel: meta.embeddingModel,
+            embeddingDimension: meta.embeddingDimension,
+            isCompatible: meta.embeddingDimension.map { $0 == EmbeddingModelInfo.current.dimension }
+        )
+    }
+
+    private static func decodeMeta(_ data: Data) -> CorpusMetadata? {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        if let data = try? Data(contentsOf: metaURL),
-           let meta = try? decoder.decode(CorpusMetadata.self, from: data) {
-            let compatible = meta.embeddingDimension.map { $0 == EmbeddingModelInfo.current.dimension }
-            return CorpusDescriptor(
-                id: dir.standardizedFileURL.path, title: meta.title, version: meta.corpusVersion,
-                source: source, url: dir, embeddingModel: meta.embeddingModel,
-                embeddingDimension: meta.embeddingDimension, isCompatible: compatible
-            )
-        }
-        return CorpusDescriptor(
-            id: dir.standardizedFileURL.path, title: fallbackTitle, version: fallbackVersion,
-            source: source, url: dir
-        )
+        return try? decoder.decode(CorpusMetadata.self, from: data)
+    }
+
+    private static func readMetadata(fromZip url: URL) -> CorpusMetadata? {
+        guard let archive = try? Archive(url: url, accessMode: .read),
+              let entry = archive.first(where: { $0.path.hasSuffix("corpus_meta.json") }) else { return nil }
+        var data = Data()
+        guard (try? archive.extract(entry, consumer: { data.append($0) })) != nil else { return nil }
+        return decodeMeta(data)
     }
 
     /// Parse the export convention `<Title>_v<N>` → (title, version). Falls back to the whole name.
