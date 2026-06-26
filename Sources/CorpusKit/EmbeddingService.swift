@@ -209,6 +209,11 @@ public class EmbeddingService {
         results.reserveCapacity(texts.count)
 
         for (i, text) in texts.enumerated() {
+            // Cooperative cancellation: lets a caller stop a long batch (e.g. embedding a whole
+            // book's chunks) between items. Throws CancellationError, which the caller can treat
+            // as a clean abort since nothing is committed until the batch returns.
+            try Task.checkCancellation()
+
             let embedding = try await embed(text)
             results.append(embedding)
 
