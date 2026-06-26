@@ -41,7 +41,7 @@ public enum CorpusBundleError: Error, LocalizedError {
         case .invalidBundle(let m): return "Invalid corpus bundle: \(m)"
         case .npyParseError(let m): return "Could not parse embeddings.npy: \(m)"
         case .countMismatch(let c, let e): return "Chunk/embedding count mismatch: \(c) chunks vs \(e) embeddings"
-        case .extractionFailed(let m): return "Failed to extract .corpus.zip: \(m)"
+        case .extractionFailed(let m): return "Failed to extract corpus bundle: \(m)"
         case .iCloudDownloadTimeout(let u): return "Timed out downloading iCloud item: \(u.lastPathComponent)"
         }
     }

@@ -63,7 +63,8 @@ public final class CorpusCatalog {
         return out.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
     }
 
-    /// Enumerate corpora in a single directory: `*.corpus.zip` files and extracted `*.corpus` dirs.
+    /// Enumerate corpora in a single directory. Recognizes the single-extension `*.corpus` bundle
+    /// file (AD-22), the legacy double-extension `*.corpus.zip` file, and extracted `*.corpus` dirs.
     public func descriptors(in directory: URL, source: CorpusDescriptor.Source) -> [CorpusDescriptor] {
         let fm = FileManager.default
         guard let entries = try? fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.isDirectoryKey]) else {
@@ -72,14 +73,33 @@ public final class CorpusCatalog {
         var result: [CorpusDescriptor] = []
         for url in entries {
             let name = url.lastPathComponent
-            if name.hasSuffix(".corpus.zip") {
+            let isDirectory = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+            if url.pathExtension == "corpus" {
+                // A `.corpus` directory is an extracted bundle; a `.corpus` file is a zipped bundle
+                // (the single-extension form, AD-22).
+                result.append(isDirectory
+                    ? descriptorForCorpusDirectory(url, source: source)
+                    : descriptorForZip(url, source: source))
+            } else if name.hasSuffix(".corpus.zip") {
+                // Legacy double-extension zipped bundle (still read; never written — AD-22).
                 result.append(descriptorForZip(url, source: source))
-            } else if url.pathExtension == "corpus",
-                      (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
-                result.append(descriptorForCorpusDirectory(url, source: source))
             }
         }
         return result
+    }
+
+    /// True for a corpus bundle file name — the single-extension `.corpus` (AD-22) or the legacy
+    /// double-extension `.corpus.zip`. Single-sources the suffix check for all consumers.
+    public static func isCorpusBundleName(_ name: String) -> Bool {
+        name.hasSuffix(".corpus.zip") || name.hasSuffix(".corpus")
+    }
+
+    /// Strip the bundle suffix (`.corpus` or legacy `.corpus.zip`) from a file/dir name to recover
+    /// the base `<Title>_v<N>` name used for title/version parsing.
+    public static func bundleBaseName(_ name: String) -> String {
+        if name.hasSuffix(".corpus.zip") { return String(name.dropLast(".corpus.zip".count)) }
+        if name.hasSuffix(".corpus") { return String(name.dropLast(".corpus".count)) }
+        return name
     }
 
     // MARK: - Helpers
@@ -89,16 +109,17 @@ public final class CorpusCatalog {
         if let data = try? Data(contentsOf: metaURL), let meta = Self.decodeMeta(data) {
             return descriptor(meta: meta, url: dir, source: source)
         }
-        let (title, version) = Self.titleAndVersion(fromFileName: String(dir.lastPathComponent.dropLast(".corpus".count)))
+        let (title, version) = Self.titleAndVersion(fromFileName: Self.bundleBaseName(dir.lastPathComponent))
         return CorpusDescriptor(id: dir.standardizedFileURL.path, title: title, version: version, source: source, url: dir)
     }
 
-    /// Reads corpus_meta.json from the `.corpus.zip` without fully extracting (single-entry read).
+    /// Reads corpus_meta.json from a zipped bundle (`.corpus` or legacy `.corpus.zip`) without fully
+    /// extracting (single-entry read).
     private func descriptorForZip(_ url: URL, source: CorpusDescriptor.Source) -> CorpusDescriptor {
         if let meta = Self.readMetadata(fromZip: url) {
             return descriptor(meta: meta, url: url, source: source)
         }
-        let (title, version) = Self.titleAndVersion(fromFileName: String(url.lastPathComponent.dropLast(".corpus.zip".count)))
+        let (title, version) = Self.titleAndVersion(fromFileName: Self.bundleBaseName(url.lastPathComponent))
         return CorpusDescriptor(id: url.standardizedFileURL.path, title: title, version: version, source: source, url: url)
     }
 
