@@ -171,7 +171,7 @@ public struct CorpusMetadata: Codable {
         } else {
             let legacy = try decoder.container(keyedBy: LegacyCodingKeys.self)
             if (try? legacy.decodeIfPresent(Int.self, forKey: .bundleFormatVersion)) != nil {
-                print("ℹ️ CorpusMetadata: migrating legacy bundle_format_version → bundle_schema_version=1")
+                dlog("ℹ️ CorpusMetadata: migrating legacy bundle_format_version → bundle_schema_version=1")
             }
             bundleSchemaVersion = 1
         }

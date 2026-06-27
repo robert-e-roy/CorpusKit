@@ -54,7 +54,7 @@ public final class CorpusSearch {
             )
         }
         if let model = corpus.metadata.embeddingModel, model != EmbeddingModelInfo.current.id {
-            print("⚠️ CorpusSearch: corpus embedded with '\(model)' but current model is '\(EmbeddingModelInfo.current.id)' — similarity semantics may differ.")
+            dlog("⚠️ CorpusSearch: corpus embedded with '\(model)' but current model is '\(EmbeddingModelInfo.current.id)' — similarity semantics may differ.")
         }
         self.metadata = corpus.metadata
         self.embedder = embedder

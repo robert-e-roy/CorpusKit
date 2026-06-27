@@ -38,7 +38,7 @@ public class VectorStore<T> {
     ///   - embeddings: Pre-computed L2-normalized embeddings matching items
     public func build(items: [T], embeddings: [[Float]]) {
         guard items.count == embeddings.count else {
-            print("⚠️ VectorStore: item count (\(items.count)) != embedding count (\(embeddings.count))")
+            dlog("⚠️ VectorStore: item count (\(items.count)) != embedding count (\(embeddings.count))")
             return
         }
 

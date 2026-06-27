@@ -46,12 +46,12 @@ public class VectorIndex {
         // Log first 5 results before and after weight is applied
         let top5 = Array(mappedResults.prefix(5))
         if !top5.isEmpty {
-            print("\n📊 Search Results (top \(top5.count)):")
+            dlog("\n📊 Search Results (top \(top5.count)):")
             for result in top5 {
-                print("  chunk: \(result.chunk.chapter) p.\(result.chunk.page)")
-                print("    raw cosine: \(String(format: "%.4f", result.rawScore))")
-                print("    importance weight: \(String(format: "%.2f", result.chunkWeight))")
-                print("    final score: \(String(format: "%.4f", result.finalScore))")
+                dlog("  chunk: \(result.chunk.chapter) p.\(result.chunk.page)")
+                dlog("    raw cosine: \(String(format: "%.4f", result.rawScore))")
+                dlog("    importance weight: \(String(format: "%.2f", result.chunkWeight))")
+                dlog("    final score: \(String(format: "%.4f", result.finalScore))")
             }
         }
         #endif

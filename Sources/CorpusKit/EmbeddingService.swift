@@ -93,8 +93,8 @@ public class EmbeddingService {
     /// Diagnostic test to verify embeddings produce different vectors for different text
     /// This catches issues where the model silently degrades to producing identical vectors
     private func runEmbeddingDiagnostic() async throws {
-        print("\n🔍 EMBEDDING DIAGNOSTIC")
-        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        dlog("\n🔍 EMBEDDING DIAGNOSTIC")
+        dlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
         let testPhrases = [
             "we admitted we were powerless over alcohol",
@@ -105,31 +105,31 @@ public class EmbeddingService {
         var embeddings: [[Float]] = []
 
         for phrase in testPhrases {
-            print("\n📊 Input: '\(phrase.prefix(40))...'")
+            dlog("\n📊 Input: '\(phrase.prefix(40))...'")
 
             // Show tokenization
             guard let tokenizer = tokenizer else {
-                print("   ⚠️  Tokenizer not loaded!")
+                dlog("   ⚠️  Tokenizer not loaded!")
                 continue
             }
             let (ids, mask) = tokenizer.tokenize(phrase, maxLength: 128)
-            print("   Token IDs (first 20): \(ids.prefix(20))")
-            print("   Attention mask (first 20): \(mask.prefix(20))")
-            print("   Token count: \(ids.count)")
+            dlog("   Token IDs (first 20): \(ids.prefix(20))")
+            dlog("   Attention mask (first 20): \(mask.prefix(20))")
+            dlog("   Token count: \(ids.count)")
 
             // Generate embedding
             let v = try await embed(phrase)
             let mag = sqrt(v.reduce(0) { $0 + $1 * $1 })
             let first5 = v.prefix(5).map { String(format: "%.4f", $0) }
             let last5 = v.suffix(5).map { String(format: "%.4f", $0) }
-            print("   Embedding magnitude: \(String(format: "%.6f", mag))")
-            print("   First 5 values: [\(first5.joined(separator: ", "))]")
-            print("   Last 5 values: [\(last5.joined(separator: ", "))]")
+            dlog("   Embedding magnitude: \(String(format: "%.6f", mag))")
+            dlog("   First 5 values: [\(first5.joined(separator: ", "))]")
+            dlog("   Last 5 values: [\(last5.joined(separator: ", "))]")
             embeddings.append(v)
         }
 
         // Check cross-similarities between unrelated phrases
-        print("\n🔬 Cross-similarity between unrelated phrases:")
+        dlog("\n🔬 Cross-similarity between unrelated phrases:")
         for i in 0..<embeddings.count {
             for j in (i+1)..<embeddings.count {
                 var dot: Float = 0
@@ -144,22 +144,22 @@ public class EmbeddingService {
                     label = "fox vs resentment"
                 }
 
-                print("   \(label): \(String(format: "%.4f", dot))")
+                dlog("   \(label): \(String(format: "%.4f", dot))")
 
                 if dot > 0.5 {
-                    print("   ⚠️  WARNING: Similarity \(String(format: "%.4f", dot)) is too high for unrelated text!")
-                    print("   ⚠️  Embedding model may be broken or degrading to similar vectors")
-                    print("   ⚠️  Expected: < 0.3 for unrelated sentences")
+                    dlog("   ⚠️  WARNING: Similarity \(String(format: "%.4f", dot)) is too high for unrelated text!")
+                    dlog("   ⚠️  Embedding model may be broken or degrading to similar vectors")
+                    dlog("   ⚠️  Expected: < 0.3 for unrelated sentences")
                 }
             }
         }
 
         // Summary
-        print("\n📋 DIAGNOSTIC SUMMARY:")
-        print("   ✓ All magnitudes should be ~1.0 (L2 normalized)")
-        print("   ✓ Cross-similarities should be < 0.3 for unrelated text")
-        print("   ✓ Token IDs should be different for different phrases")
-        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+        dlog("\n📋 DIAGNOSTIC SUMMARY:")
+        dlog("   ✓ All magnitudes should be ~1.0 (L2 normalized)")
+        dlog("   ✓ Cross-similarities should be < 0.3 for unrelated text")
+        dlog("   ✓ Token IDs should be different for different phrases")
+        dlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
     }
 
     /// Generate L2-normalized embedding for the given text
