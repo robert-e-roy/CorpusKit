@@ -1,1 +1,5 @@
 .build/
+
+# Per-user Xcode state - not shared
+.swiftpm/xcode/xcuserdata/
+xcuserdata/
