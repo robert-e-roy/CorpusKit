@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: macos-latest
+
+    steps:
+      # Check out WITHOUT LFS: the Core ML model is ~416 MB and the free
+      # LFS allowance is 1 GB/month. We restore it from the Actions cache
+      # instead, so it is downloaded once per model change, not per run.
+      - uses: actions/checkout@v4
+        with:
+          lfs: false
+
+      - name: List LFS objects (cache key)
+        run: git lfs ls-files --long | cut -d ' ' -f1 | sort > .lfs-assets-id
+
+      - name: Restore LFS cache
+        uses: actions/cache@v4
+        with:
+          path: .git/lfs
+          key: lfs-${{ hashFiles('.lfs-assets-id') }}
+
+      - name: Pull LFS files (uses cache when present)
+        run: git lfs pull
+
+      - name: Toolchain versions
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Build
+        run: swift build
+
+      - name: Test
+        run: swift test
