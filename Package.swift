@@ -29,7 +29,7 @@ let package = Package(
             resources: [
                 // Ship the precompiled model (.mlmodelc) — SPM .copy does not compile a raw
                 // .mlmodel/.mlpackage, and Core ML's MLModel.load needs a compiled .mlmodelc.
-                // Regenerate via Python Scripts/05_pytorch_to_coreml.py (mlprogram format).
+                // Regenerate with arctic_embed_to_coreml.py from github.com/robert-e-roy/PyTorch_to_CoreML (mlprogram).
                 // .mlmodelc is a directory bundle — must be .copy (not .process).
                 .copy("Resources/arctic-embed-m-v1.5.mlmodelc"),
                 .copy("Resources/vocab.txt"),

@@ -45,10 +45,14 @@ one — apps no longer bundle their own copy.
 `EmbeddingModelInfo.current` is the single source of truth for the model id, dimension, sequence
 length and revision. Exporters stamp it into `corpus_meta.json`, and `CorpusSearch` refuses a
 corpus whose embedding dimension doesn't match the current model. To swap models, replace the
-`.mlmodelc` and update `EmbeddingModelInfo.current` together. The conversion script that produced
-the current model lives in the private CorpusKitStudio repo. The public
-[PyTorch_to_CoreML](https://github.com/robert-e-roy/PyTorch_to_CoreML) repo shows the same
-PyTorch-tracing approach, applied to the earlier all-MiniLM-L6-v2 model.
+`.mlmodelc` and update `EmbeddingModelInfo.current` together. To regenerate the model, use
+`arctic_embed_to_coreml.py` in the public
+[PyTorch_to_CoreML](https://github.com/robert-e-roy/PyTorch_to_CoreML) repo (default
+`--seq-len 256`, pinned conversion stack in its `requirements.txt`).
+
+Note on pooling: the model card recommends CLS-token pooling, plus a query prefix on queries only.
+CorpusKit uses masked mean pooling with no prefix, and every existing corpus was embedded that
+way. Switching would mean bumping `EmbeddingModelInfo.revision` and re-embedding every corpus.
 
 ## Requirements
 
