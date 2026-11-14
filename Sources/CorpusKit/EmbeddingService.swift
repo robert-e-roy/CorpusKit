@@ -2,15 +2,15 @@
 //  EmbeddingService.swift
 //  CorpusKit
 //
-//  Shared embedding service for MiniLM-L6-v2 model
-//  Uses Apple's CoreML for on-device inference
+//  Shared embedding service for the bundled Core ML embedding model
+//  (snowflake-arctic-embed-m-v1.5 — see EmbeddingModelInfo.current). On-device inference only.
 //
 
 import CoreML
 import Accelerate
 import Foundation
 
-/// Service for generating L2-normalized embeddings using MiniLM-L6-v2 model
+/// Service for generating L2-normalized embeddings with the bundled model (`EmbeddingModelInfo.current`)
 public class EmbeddingService {
 
     private var model: MLModel?
@@ -22,7 +22,7 @@ public class EmbeddingService {
 
     public init() {}
 
-    /// Load the MiniLM embedding model from the app bundle
+    /// Load the bundled embedding model and vocabulary (package bundle first, then the app bundle)
     /// - Throws: EmbeddingError if model or vocabulary cannot be loaded
     public func load() async throws {
         // Resolve the model + vocab. Prefer the package's own bundled resources (Bundle.module),
@@ -164,7 +164,7 @@ public class EmbeddingService {
 
     /// Generate L2-normalized embedding for the given text
     /// - Parameter text: Input text to embed
-    /// - Returns: 384-dimensional L2-normalized embedding vector
+    /// - Returns: L2-normalized embedding vector of `dimension` floats (768 for the current model)
     /// - Throws: EmbeddingError if model is not loaded or inference fails
     public func embed(_ text: String) async throws -> [Float] {
         guard let model = model, let tokenizer = tokenizer else {
@@ -174,7 +174,7 @@ public class EmbeddingService {
         // Tokenize to the model's fixed input length.
         let (ids, mask) = tokenizer.tokenize(text, maxLength: sequenceLength)
 
-        // Create MLMultiArray inputs (the model declares Float32 inputs of shape [1, seqLength]).
+        // Create MLMultiArray inputs (the model declares Int32 inputs of shape [1, seqLength]).
         let inputIds = try createMLMultiArray(from: ids)
         let attentionMask = try createMLMultiArray(from: mask)
 

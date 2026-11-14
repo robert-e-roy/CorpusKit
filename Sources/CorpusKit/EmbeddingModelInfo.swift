@@ -28,8 +28,9 @@ public struct EmbeddingModelInfo: Sendable, Equatable, Codable {
     }
 
     /// The embedding model currently bundled with CorpusKit. Update this (and the bundled
-    /// `.mlmodelc`) together whenever the model is swapped. The model self-pools (mean, with
-    /// attention mask) and L2-normalizes internally — `EmbeddingService` reads its output directly.
+    /// `.mlmodelc`) together whenever the model is swapped. The model outputs per-token embeddings
+    /// ([1, seqLength, dimension]); `EmbeddingService` mean-pools them with the attention mask and
+    /// L2-normalizes client-side (coremltools mis-converts the in-graph masked-mean ops).
     public static let current = EmbeddingModelInfo(
         id: "Snowflake/snowflake-arctic-embed-m-v1.5",
         dimension: 768,
