@@ -1,5 +1,6 @@
 # CorpusKit
 [![CI](https://github.com/robert-e-roy/CorpusKit/actions/workflows/ci.yml/badge.svg)](https://github.com/robert-e-roy/CorpusKit/actions/workflows/ci.yml)
+
 The portable, on-device retrieval engine behind the CorpusKit family. A Swift package that
 embeds text with a bundled Core ML model and searches pre-embedded corpora — no network, no
 server, no analytics.
