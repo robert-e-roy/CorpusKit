@@ -4,7 +4,7 @@ This document provides a guide to all documentation files in the CorpusKit packa
 
 ## Getting Started (Read First)
 
-### 1. [README.md](README.md)
+### 1. [README.md](../README.md)
 **Start here** - Overview of the package, features, and basic usage examples.
 
 **Topics covered:**
@@ -119,7 +119,7 @@ This document provides a guide to all documentation files in the CorpusKit packa
 ### I want to...
 
 **...understand what CorpusKit does**
-→ Read [README.md](README.md)
+→ Read [README.md](../README.md)
 
 **...see code examples**
 → Read [QUICK_REFERENCE.md](QUICK_REFERENCE.md)

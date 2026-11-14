@@ -1,140 +1,177 @@
 # CorpusKit
 
-Shared Swift Package for embedding and vector similarity search functionality used by:
-- **CorpusKitStudio** (macOS) - Corpus authoring and testing tool
-- **BigBookViaLLM** (iOS) - On-device RAG application
+The portable, on-device retrieval engine behind the CorpusKit family. A Swift package that
+embeds text with a bundled Core ML model and searches pre-embedded corpora — no network, no
+server, no analytics.
 
-## Features
+Consumers:
+- **CorpusKitStudio** (macOS) — authors, chunks, embeds, evaluates and exports corpora
+- **CorpusKitReader** — loads and searches exported corpora
+- **BigBookViaLLM** (iOS) — on-device RAG over a shipped corpus
 
-### EmbeddingService
-- On-device embedding generation using MiniLM-L6-v2 (CoreML)
-- L2-normalized 384-dimensional vectors
-- WordPiece tokenization with BERT vocabulary
-- Batch processing with progress callbacks
-- Supports both `.json` and `.txt` vocabulary formats
+Authoring (importers, chunkers, editing UI, export) lives in CorpusKitStudio. This package holds
+only what both sides need, so a consumer queries a corpus through exactly the same embedding and
+scoring path that was used to build and evaluate it. Design decisions are recorded in
+[`ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
-### VectorStore
-- Fast cosine similarity search using Accelerate framework's vDSP
-- Generic over item types for flexibility
-- Pre-computed embeddings (no re-embedding at query time)
-- Optional custom weighting functions per item
-- Returns scored results with both raw and weighted scores
+## What's in the package
+
+| Area | Types |
+|------|-------|
+| Embedding | `EmbeddingService`, `WordPieceTokenizer`, `EmbeddingModelInfo` |
+| Vector search | `VectorStore<T>`, `VectorIndex`, `ScoredChunk` |
+| Sentence reranking | `SentenceRanker`, `RankedSentence`, `RankableChunk` |
+| Corpus consumption | `CorpusCatalog`, `CorpusDescriptor`, `CorpusBundleLoader`, `LoadedCorpus`, `CorpusSearch` |
+| Data model | `Chunk`, `CorpusMetadata` |
+| Evaluation | `EvalRunner`, `EvalTest`, `EvalResult`, `EvalSummary` |
+| Archives | `ZipArchive` (cross-platform zip/unzip via ZIPFoundation) |
+
+## Embedding model
+
+The model ships **inside the package** as a precompiled resource, so every consumer uses the same
+one — apps no longer bundle their own copy.
+
+- **Model:** `Snowflake/snowflake-arctic-embed-m-v1.5`, Core ML `mlprogram`, precompiled to
+  `Resources/arctic-embed-m-v1.5.mlmodelc` (~416 MB)
+- **Output:** 768-dimensional vectors. The model mean-pools (with attention mask) and
+  L2-normalizes internally, so cosine similarity is a plain dot product.
+- **Sequence length:** 256 tokens, read from the model's metadata at load time
+- **Compute units:** forced to `.cpuOnly` (FP32). Query and corpus embeddings must come from the
+  same compute path; letting each device pick the Neural Engine or GPU shifts the vectors and
+  breaks ranking across platforms.
+
+`EmbeddingModelInfo.current` is the single source of truth for the model id, dimension, sequence
+length and revision. Exporters stamp it into `corpus_meta.json`, and `CorpusSearch` refuses a
+corpus whose embedding dimension doesn't match the current model. To swap models, replace the
+`.mlmodelc` and update `EmbeddingModelInfo.current` together; to regenerate the current one, run
+`Python Scripts/05_pytorch_to_coreml.py` in the CorpusKitStudio repo.
 
 ## Requirements
 
-- iOS 17.0+ / macOS 14.0+
-- Swift 5.9+
-- Xcode 15.0+
+- iOS 17+ / macOS 14+
+- Swift 5.9+ (swift-tools 5.9)
+- **Git LFS** — the model is stored in LFS. Run `git lfs install` before cloning, or
+  `git lfs pull` afterwards; without it the `.mlmodelc` is a pointer file and model loading fails.
+- One dependency: [ZIPFoundation](https://github.com/weichsel/ZIPFoundation) (≥ 0.9.20), for
+  cross-platform `.corpus` bundle extraction
 
 ## Installation
 
-### Adding to an Xcode Project
+Consumers reference the package locally as a sibling checkout:
 
-1. In Xcode, select your project in the navigator
-2. Select your app target
-3. Go to the "General" tab, scroll to "Frameworks, Libraries, and Embedded Content"
-4. Click the "+" button
-5. Click "Add Other..." → "Add Package Dependency..."
-6. Enter the local path: `../CorpusKit`
-7. Click "Add Package"
-8. Select "CorpusKit" library and click "Add Package"
+1. In Xcode: **File → Add Package Dependencies… → Add Local…**, and choose `../CorpusKit`
+2. Add the **CorpusKit** library to your app target
 
-### Required Resources
-
-Both apps using CorpusKit must include these resources in their bundle:
-
-1. **MiniLMEmbedding.mlpackage** - CoreML model
-2. **vocab.json** or **vocab.txt** - BERT WordPiece vocabulary
+No model or vocabulary resources need to be added to the app; they resolve from the package's
+`Bundle.module`. (`EmbeddingService` still falls back to `Bundle.main` for apps that ship
+their own copy.)
 
 ## Usage
 
-### EmbeddingService
+### Search an exported corpus (the common case)
 
 ```swift
 import CorpusKit
 
-let embeddingService = EmbeddingService()
+// 1. List available corpora — reads metadata only, no embeddings loaded
+let catalog = CorpusCatalog()
+let corpora = catalog.descriptors(sources: [
+    (directory: Bundle.main.resourceURL!, source: .bundled),
+    (directory: documentsURL, source: .local),
+])
 
-// Load model (one time, at app startup)
-try await embeddingService.load()
+// 2. Load one (a `.corpus` bundle file, legacy `.corpus.zip`, or extracted `.corpus` directory)
+let loader = CorpusBundleLoader()
+try loader.ensureDownloaded(descriptor.url)          // no-op unless it's an iCloud item
+let corpus = try loader.load(corpusZip: descriptor.url)
+// or: try loader.load(corpusDirectory: extractedDir)
 
-// Generate embedding for a query
-let embedding = try await embeddingService.embed("What is the meaning of life?")
-// Returns: [Float] of length 384, L2-normalized
+// 3. Search — throws `.incompatibleModel` if the corpus was embedded at another dimension
+let search = try CorpusSearch(corpus: corpus)
+try await search.loadModel()                         // optional; search() loads lazily
+let results = try await search.search("What is the meaning of life?", k: 3, rankSentences: true)
 
-// Batch processing with progress
-let texts = ["query 1", "query 2", "query 3"]
-let embeddings = try await embeddingService.embedBatch(texts) { progress in
-    print("Progress: \(progress * 100)%")
+for r in results {
+    print(r.chunk.chapter, r.chunk.page, r.finalScore)   // finalScore = cosine × importance
+    if let sentence = r.winningSentence { print("→", sentence) }
 }
 ```
 
-### VectorStore
+`descriptor.isCompatible` lets a picker grey out corpora built with a different model before
+the user tries to open one.
+
+### Embedding directly
 
 ```swift
-import CorpusKit
+let embedder = EmbeddingService()
+try await embedder.load()
 
-struct Chunk {
-    let id: Int
-    let text: String
-    let chapter: String
-    let importance: Float
-}
+let vector = try await embedder.embed("A question")      // [Float], 768-dim, L2-normalized
 
-// Create and build index
-let store = VectorStore<Chunk>()
-store.build(items: chunks, embeddings: precomputedEmbeddings)
-
-// Search with custom weighting
-let results = store.search(
-    query: queryEmbedding,
-    k: 5,
-    weightFunction: { chunk in
-        // Example: boost important chunks
-        chunk.importance * 1.5
-    }
-)
-
-// Access results
-for result in results {
-    print("Chunk: \(result.item.text)")
-    print("Raw score: \(result.rawScore)")
-    print("Weighted score: \(result.weightedScore)")
+// Batch, with progress (delivered on the main actor) and cooperative cancellation:
+// cancelling the surrounding Task throws CancellationError between items.
+let vectors = try await embedder.embedBatch(texts) { progress in
+    print("\(Int(progress * 100))%")
 }
 ```
 
-## Architecture Notes
+### Generic vector search
 
-### Key Differences from Original Implementations
+`VectorStore<T>` works over any item type with your own weighting:
 
-**EmbeddingService:**
-- Unified model loading (supports both generic MLModel and typed models)
-- Supports both vocab.json and vocab.txt formats
-- Consistent async/await API
-- L2 normalization using vDSP for performance
+```swift
+let store = VectorStore<MyItem>()
+store.build(items: items, embeddings: embeddings)
 
-**VectorStore:**
-- Generic over item type (not tied to specific Chunk model)
-- Simplified API with optional weight functions
-- Returns structured ScoredChunk results
-- Apps maintain their own chunk models and weighting logic
+let hits = store.search(query: queryVector, k: 5) { item in item.boost }
+for hit in hits {
+    print(hit.item, hit.rawScore, hit.weightedScore)
+}
+```
 
-### Migration Strategy
+`VectorIndex` is the `Chunk`-specific wrapper that weights by `chunk.importance`, and is what
+`CorpusSearch` uses.
 
-Both apps should:
-1. Add CorpusKit as a local package dependency
-2. Update imports from old service classes to `import CorpusKit`
-3. Replace `VectorIndex` with `VectorStore<Chunk>`
-4. Adapt weight calculation to use the `weightFunction` parameter
-5. Delete the old `EmbeddingService.swift`, `VectorIndex.swift`, and `WordPieceTokenizer.swift` files
+## Corpus bundle format
+
+An exported corpus is a zip of a `<Title>_v<N>.corpus/` directory containing at least:
+
+- `corpus_meta.json` — `CorpusMetadata`, including the embedding model id and dimension
+- `chunks.json` — `[Chunk]` (text and location; embeddings excluded)
+- `embeddings.npy` — float32 matrix, one row per chunk, in chunk order
+
+Bundles are written with the single extension **`.corpus`** (AD-22). The older double extension
+`.corpus.zip` is still read but no longer written. `CorpusCatalog.isCorpusBundleName(_:)` and
+`bundleBaseName(_:)` handle both.
+
+## Logging
+
+Engine diagnostics (emoji-prefixed traces) go through an internal `dlog` and are **off by
+default**, so they don't flood the host app's console. To turn them on in a DEBUG build of a host
+app:
+
+```bash
+defaults write <host.bundle.id> CKVerboseLogging -bool YES
+```
+
+…or set `CKDebugLog.forceEnabled = true` in `DebugLog.swift`.
 
 ## Testing
 
 ```bash
-cd CorpusKit
 swift test
 ```
 
+Tests use Swift Testing (`import Testing`).
+
+## Further reading
+
+- [`ARCHITECTURE.md`](docs/ARCHITECTURE.md) — architecture decisions log (shared with CorpusKitStudio)
+- [`PHASES.md`](docs/PHASES.md), [`PHASE4A_CLAUDE_CODE.md`](docs/PHASE4A_CLAUDE_CODE.md) — consolidation phases and history
+- The `docs/INTEGRATION.md`, `docs/MIGRATION_CHECKLIST.md`, `docs/QUICK_REFERENCE.md`, `docs/DIFFERENCES.md`,
+  `docs/SUMMARY.md` and `docs/INDEX.md` files date from the original MiniLM-era extraction and are
+  historical; where they conflict with this README or `ARCHITECTURE.md`, they are out of date.
+
 ## License
 
-Same license as parent projects (CorpusKitStudio and BigBookViaLLM).
+Same license as the parent projects (CorpusKitStudio and BigBookViaLLM).
