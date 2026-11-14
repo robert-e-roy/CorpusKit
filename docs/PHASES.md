@@ -205,6 +205,26 @@ badly from the EPUB's. Root causes, all in Studio's `PDFImporter`:
 Until fixed, prefer the EPUB source for books that exist in both formats. The page-label +
 EPUB-estimation work (committed) is unaffected.
 
+## Parked — Arctic-embed pooling vs. model card
+
+Noted 2026-11-14; **deliberately not changing code for now**. The model card for
+`snowflake-arctic-embed-m-v1.5` (and its sentence-transformers `1_Pooling/config.json`) specifies
+**CLS-token pooling** plus a query-only prefix:
+`Represent this sentence for searching relevant passages: `. CorpusKit instead uses **masked mean
+pooling with no prefix** (`EmbeddingService.meanPool`), a carry-over from the MiniLM era (AD-10).
+It is internally consistent (corpus and query are embedded the same way), so retrieval works, but it
+probably isn't getting the model's best retrieval quality.
+
+If revisited:
+1. **Measure first.** Run the eval set both ways (CLS + query prefix vs. current mean) before
+   deciding. The Core ML model already outputs per-token embeddings, so no reconversion is needed.
+   Only the pooling in `EmbeddingService` and the query-side prefix in `CorpusSearch` change.
+2. **It's a corpus-breaking change.** Bump `EmbeddingModelInfo.revision`, make the compatibility
+   guard check revision as well as dimension (it currently checks dimension only), and re-embed
+   every corpus in Studio.
+3. **Prefix goes on queries only, not on chunks.** `EvalRunner` and `SentenceRanker` need the same
+   treatment as `CorpusSearch` so that eval matches production.
+
 ## Rules for all phases
 - Do not add features until the current phase's eval gate passes
 - Only show changed files in output
